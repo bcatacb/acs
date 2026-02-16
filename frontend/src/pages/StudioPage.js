@@ -620,18 +620,40 @@ export const StudioPage = () => {
                             )}
                         </div>
 
-                        {/* Download Acapella */}
-                        {audioUrl && (
-                            <Button
-                                asChild
-                                variant="outline"
-                                className="w-full h-11"
-                                data-testid="download-acapella-btn"
-                            >
-                                <a href={audioUrl} download="acapella.webm">
-                                    <Download className="w-4 h-4 mr-2" /> Download Acapella
-                                </a>
-                            </Button>
+                        {/* Downloads Section */}
+                        {(audioUrl || project?.beat?.status === 'complete') && (
+                            <div className="bg-card border border-accent/40 rounded-xl p-6 space-y-4">
+                                <h2 className="font-heading text-lg font-semibold flex items-center gap-2">
+                                    <Download className="w-4 h-4 text-accent" /> Downloads
+                                </h2>
+                                
+                                {/* Download Acapella */}
+                                {audioUrl && (
+                                    <Button
+                                        asChild
+                                        variant="outline"
+                                        className="w-full h-11"
+                                        data-testid="download-acapella-btn"
+                                    >
+                                        <a href={audioUrl} download="acapella.webm">
+                                            <Mic className="w-4 h-4 mr-2" /> Download Acapella
+                                        </a>
+                                    </Button>
+                                )}
+
+                                {/* Download Beat */}
+                                {project?.beat?.status === 'complete' && project?.beat?.audio_url && (
+                                    <Button
+                                        asChild
+                                        className="w-full h-11 bg-accent hover:bg-accent/90 text-accent-foreground"
+                                        data-testid="sidebar-download-beat-btn"
+                                    >
+                                        <a href={project.beat.audio_url} download="beat.mp3">
+                                            <Music className="w-4 h-4 mr-2" /> Download Beat
+                                        </a>
+                                    </Button>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
