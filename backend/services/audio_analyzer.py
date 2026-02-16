@@ -39,7 +39,7 @@ async def analyze_acapella(audio_file_path: str, session_id: str) -> dict:
             api_key=EMERGENT_LLM_KEY,
             session_id=session_id,
             system_message=ANALYSIS_SYSTEM_PROMPT
-        ).with_model("gemini", "gemini-2.5-pro-preview-05-06")
+        ).with_model("gemini", "gemini-2.5-pro")
         
         # Create file content for audio
         audio_file = FileContentWithMimeType(
