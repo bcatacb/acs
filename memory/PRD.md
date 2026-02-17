@@ -23,7 +23,7 @@ Build a beats/instrumental making app for rap music similar to Suno, except inst
 - [x] FastAPI server with /api prefix routing
 - [x] JWT authentication (register, login, me endpoints)
 - [x] MongoDB integration for users and projects
-- [x] Gemini AI integration for audio analysis
+- [x] Local audio feature analysis (no external LLM dependency)
 - [x] Suno API integration for beat generation
 - [x] File upload handling for audio recordings
 - [x] 8 genre options with descriptions
@@ -72,12 +72,11 @@ Build a beats/instrumental making app for rap music similar to Suno, except inst
 - **Backend**: FastAPI, Motor (MongoDB async), Python 3.11
 - **Database**: MongoDB
 - **AI Services**: 
-  - Gemini (audio analysis via Emergent LLM Key)
+  - Local signal analysis for vocal timing/features
   - Suno API (beat generation)
 - **Auth**: JWT with bcrypt password hashing
 
 ## API Keys Required
-- EMERGENT_LLM_KEY (for Gemini)
 - SUNO_API_KEY (for beat generation)
 
 ## Next Tasks

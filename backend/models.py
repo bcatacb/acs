@@ -32,10 +32,12 @@ class Token(BaseModel):
 class ProjectCreate(BaseModel):
     name: str
     genre: str = "trap"
+    instrument_pack: str = "auto"
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     genre: Optional[str] = None
+    instrument_pack: Optional[str] = None
 
 class AudioAnalysis(BaseModel):
     bpm: int
@@ -60,6 +62,7 @@ class Project(BaseModel):
     user_id: str
     name: str
     genre: str
+    instrument_pack: str = "auto"
     acapella_url: Optional[str] = None
     analysis: Optional[AudioAnalysis] = None
     beat: Optional[BeatGeneration] = None

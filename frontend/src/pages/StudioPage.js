@@ -87,6 +87,13 @@ const WaveformVisualizer = ({ audioData, isRecording, isPlaying }) => {
     );
 };
 
+const INSTRUMENT_PACKS = [
+    { id: 'auto', name: 'Auto' },
+    { id: 'dark', name: 'Dark' },
+    { id: 'warm', name: 'Warm' },
+    { id: 'orchestral', name: 'Orchestral' },
+];
+
 export const StudioPage = () => {
     const { projectId } = useParams();
     const { token } = useAuth();
@@ -110,7 +117,7 @@ export const StudioPage = () => {
     // Processing state
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [pollInterval, setPollInterval] = useState(null);
+    const pollIntervalRef = useRef(null);
 
     const mediaRecorderRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -118,16 +125,21 @@ export const StudioPage = () => {
     const audioRef = useRef(null);
     const timerRef = useRef(null);
     const chunksRef = useRef([]);
+    const beatObjectUrlRef = useRef(null);
+    const mixObjectUrlRef = useRef(null);
 
-    useEffect(() => {
-        loadProject();
-        return () => {
-            if (timerRef.current) clearInterval(timerRef.current);
-            if (pollInterval) clearInterval(pollInterval);
-        };
-    }, [projectId]);
+    const revokeBeatObjectUrl = useCallback(() => {
+        if (beatObjectUrlRef.current) {
+            URL.revokeObjectURL(beatObjectUrlRef.current);
+            beatObjectUrlRef.current = null;
+        }
+        if (mixObjectUrlRef.current) {
+            URL.revokeObjectURL(mixObjectUrlRef.current);
+            mixObjectUrlRef.current = null;
+        }
+    }, []);
 
-    const loadProject = async () => {
+    const loadProject = useCallback(async () => {
         try {
             const [projectData, genresData] = await Promise.all([
                 projectsApi.getOne(token, projectId),
@@ -141,7 +153,44 @@ export const StudioPage = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [token, projectId, navigate]);
+
+    useEffect(() => {
+        loadProject();
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            revokeBeatObjectUrl();
+        };
+    }, [loadProject, revokeBeatObjectUrl]);
+
+    const toAuthorizedBeat = useCallback(async (status) => {
+        if (!status?.audio_url || !token) return status;
+        const beatResponse = await fetch(status.audio_url, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!beatResponse.ok) {
+            throw new Error(`Failed to fetch beat audio (${beatResponse.status})`);
+        }
+        const beatBlob = await beatResponse.blob();
+        revokeBeatObjectUrl();
+        const beatObjectUrl = URL.createObjectURL(beatBlob);
+        beatObjectUrlRef.current = beatObjectUrl;
+
+        let mixObjectUrl = null;
+        if (status?.mix_url) {
+            const mixResponse = await fetch(status.mix_url, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (mixResponse.ok) {
+                const mixBlob = await mixResponse.blob();
+                mixObjectUrl = URL.createObjectURL(mixBlob);
+                mixObjectUrlRef.current = mixObjectUrl;
+            }
+        }
+
+        return { ...status, audio_url: beatObjectUrl, mix_url: mixObjectUrl };
+    }, [token, revokeBeatObjectUrl]);
 
     const startRecording = async () => {
         try {
@@ -250,6 +299,7 @@ export const StudioPage = () => {
         }
 
         setIsGenerating(true);
+        revokeBeatObjectUrl();
         try {
             const result = await projectsApi.generateBeat(token, projectId);
             setProject(prev => ({ 
@@ -257,28 +307,49 @@ export const StudioPage = () => {
                 beat: { task_id: result.task_id, status: 'processing' },
                 status: 'generating'
             }));
-            toast.success('Beat generation started!');
+            toast.success('Accompaniment generation started!');
+
+            // Try immediate status fetch first (local generation completes synchronously).
+            try {
+                const immediate = await projectsApi.checkBeatStatus(token, projectId);
+                if (immediate.status === 'complete') {
+                    const withAudio = await toAuthorizedBeat(immediate);
+                    setProject(prev => ({
+                        ...prev,
+                        beat: withAudio,
+                        status: 'complete'
+                    }));
+                    setIsGenerating(false);
+                    toast.success('Accompaniment generated!');
+                    return;
+                }
+            } catch (error) {
+                console.error('Immediate status check failed:', error);
+            }
 
             // Start polling for status
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             const interval = setInterval(async () => {
                 try {
                     const status = await projectsApi.checkBeatStatus(token, projectId);
                     if (status.status === 'complete') {
+                        const withAudio = await toAuthorizedBeat(status);
                         clearInterval(interval);
+                        pollIntervalRef.current = null;
                         setProject(prev => ({
                             ...prev,
-                            beat: status,
+                            beat: withAudio,
                             status: 'complete'
                         }));
                         setIsGenerating(false);
-                        toast.success('Beat generated!');
+                        toast.success('Accompaniment generated!');
                     }
                 } catch (error) {
                     console.error('Status check failed:', error);
                 }
             }, 10000);
             
-            setPollInterval(interval);
+            pollIntervalRef.current = interval;
 
         } catch (error) {
             toast.error(error.response?.data?.detail || 'Generation failed');
@@ -292,6 +363,15 @@ export const StudioPage = () => {
             setProject(prev => ({ ...prev, genre }));
         } catch (error) {
             toast.error('Failed to update genre');
+        }
+    };
+
+    const handleInstrumentPackChange = async (instrument_pack) => {
+        try {
+            await projectsApi.update(token, projectId, { instrument_pack });
+            setProject(prev => ({ ...prev, instrument_pack }));
+        } catch (error) {
+            toast.error('Failed to update instrument pack');
         }
     };
 
@@ -504,6 +584,45 @@ export const StudioPage = () => {
                                             <p className="text-sm text-muted-foreground">
                                                 Duration: {Math.round(project.beat.duration || 0)}s
                                             </p>
+                                            {typeof project.beat.repetition_score === 'number' && (
+                                                <p className="text-sm text-muted-foreground">
+                                                    Repetition score: {project.beat.repetition_score.toFixed(3)} (lower is better)
+                                                </p>
+                                            )}
+                                            {typeof project.beat.render_attempts === 'number' && (
+                                                <p className="text-xs text-muted-foreground/80">
+                                                    Render attempts: {project.beat.render_attempts}
+                                                </p>
+                                            )}
+                                            {project.beat.instrument_system_version && (
+                                                <p className="text-xs text-muted-foreground/80">
+                                                    Instruments: {project.beat.instrument_system_version}
+                                                </p>
+                                            )}
+                                            {project.beat.instrument_pack && (
+                                                <p className="text-xs text-muted-foreground/80 capitalize">
+                                                    Pack: {project.beat.instrument_pack}
+                                                </p>
+                                            )}
+                                            {project.beat.loop_source && (
+                                                <p className="text-xs text-muted-foreground/80">
+                                                    Loop: {project.beat.loop_source.split('\\').pop().split('/').pop()}
+                                                </p>
+                                            )}
+                                            {project.beat.midi_sources && (
+                                                <p className="text-xs text-muted-foreground/80">
+                                                    MIDI: {[
+                                                        project.beat.midi_sources.chords,
+                                                        project.beat.midi_sources.melodies,
+                                                        project.beat.midi_sources.basslines
+                                                    ].filter(Boolean).map((p) => p.split('\\').pop().split('/').pop()).join(' | ') || 'none'}
+                                                </p>
+                                            )}
+                                            {project.beat.asset_counts && (
+                                                <p className="text-xs text-muted-foreground/80">
+                                                    Assets: K{project.beat.asset_counts.kick_samples || 0} H{project.beat.asset_counts.hat_samples || 0} C{project.beat.asset_counts.clap_samples || 0} L{project.beat.asset_counts.loops || 0} M{project.beat.asset_counts.midi_files || 0}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -513,15 +632,37 @@ export const StudioPage = () => {
                                         src={project.beat.audio_url}
                                     />
 
-                                    <Button
-                                        asChild
-                                        className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
-                                        data-testid="download-beat-btn"
-                                    >
-                                        <a href={project.beat.audio_url} download>
-                                            <Download className="w-4 h-4 mr-2" /> Download Beat
-                                        </a>
-                                    </Button>
+                                    {project.beat.mix_url && (
+                                        <audio 
+                                            controls 
+                                            className="w-full mb-4"
+                                            src={project.beat.mix_url}
+                                        />
+                                    )}
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <Button
+                                            asChild
+                                            className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
+                                            data-testid="download-beat-btn"
+                                        >
+                                            <a href={project.beat.audio_url} download="accompaniment.wav">
+                                                <Download className="w-4 h-4 mr-2" /> Download Beat
+                                            </a>
+                                        </Button>
+                                        {project.beat.mix_url && (
+                                            <Button
+                                                asChild
+                                                variant="outline"
+                                                className="w-full"
+                                                data-testid="download-mix-btn"
+                                            >
+                                                <a href={project.beat.mix_url} download="mix.wav">
+                                                    <Download className="w-4 h-4 mr-2" /> Download Mix
+                                                </a>
+                                            </Button>
+                                        )}
+                                    </div>
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -546,6 +687,26 @@ export const StudioPage = () => {
                                                 <span>{g.name}</span>
                                                 <span className="text-xs text-muted-foreground">{g.description}</span>
                                             </div>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Instrument Pack */}
+                        <div className="bg-card border border-border/40 rounded-xl p-6">
+                            <h2 className="font-heading text-lg font-semibold mb-4">Instrument Pack</h2>
+                            <Select
+                                value={project?.instrument_pack || 'auto'}
+                                onValueChange={handleInstrumentPackChange}
+                            >
+                                <SelectTrigger className="h-11 bg-input/50 border-transparent" data-testid="studio-pack-select">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {INSTRUMENT_PACKS.map((p) => (
+                                        <SelectItem key={p.id} value={p.id}>
+                                            {p.name}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -590,7 +751,7 @@ export const StudioPage = () => {
 
                             <Button
                                 onClick={handleGenerateBeat}
-                                disabled={!project?.analysis || isGenerating || project?.beat?.status === 'complete'}
+                                disabled={!project?.analysis || isGenerating}
                                 className="w-full h-11 bg-primary hover:bg-primary/90"
                                 data-testid="generate-btn"
                             >
@@ -601,8 +762,8 @@ export const StudioPage = () => {
                                     </>
                                 ) : project?.beat?.status === 'complete' ? (
                                     <>
-                                        <Check className="w-4 h-4 mr-2" />
-                                        Beat Ready
+                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                        Generate New Version
                                     </>
                                 ) : (
                                     <>
@@ -648,8 +809,21 @@ export const StudioPage = () => {
                                         className="w-full h-11 bg-accent hover:bg-accent/90 text-accent-foreground"
                                         data-testid="sidebar-download-beat-btn"
                                     >
-                                        <a href={project.beat.audio_url} download="beat.mp3">
+                                        <a href={project.beat.audio_url} download="accompaniment.wav">
                                             <Music className="w-4 h-4 mr-2" /> Download Beat
+                                        </a>
+                                    </Button>
+                                )}
+
+                                {project?.beat?.status === 'complete' && project?.beat?.mix_url && (
+                                    <Button
+                                        asChild
+                                        variant="outline"
+                                        className="w-full h-11"
+                                        data-testid="sidebar-download-mix-btn"
+                                    >
+                                        <a href={project.beat.mix_url} download="mix.wav">
+                                            <Download className="w-4 h-4 mr-2" /> Download Mix
                                         </a>
                                     </Button>
                                 )}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -52,11 +52,7 @@ export const DashboardPage = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [newProject, setNewProject] = useState({ name: '', genre: 'trap' });
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         try {
             const [projectsData, genresData] = await Promise.all([
                 projectsApi.getAll(token),
@@ -69,7 +65,11 @@ export const DashboardPage = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [token]);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     const handleCreateProject = async () => {
         if (!newProject.name.trim()) {

@@ -1,0 +1,67 @@
+{
+  "pack_id": "starter_pack_v1",
+  "name": "Starter Pack v1",
+  "version": "1.0.0",
+  "sample_rate": 44100,
+  "instruments": [
+    {
+      "id": "keys_main",
+      "role": "keys",
+      "default_gain": 0.9,
+      "round_robin": true,
+      "zones": [
+        {
+          "root_midi": 60,
+          "min_midi": 48,
+          "max_midi": 72,
+          "velocity_min": 1,
+          "velocity_max": 127,
+          "articulation": "sustain",
+          "files": [
+            "samples/keys_main/REPLACE_WITH_KEYS_SAMPLE_1.wav",
+            "samples/keys_main/REPLACE_WITH_KEYS_SAMPLE_2.wav"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pad_main",
+      "role": "pad",
+      "default_gain": 0.8,
+      "round_robin": false,
+      "zones": [
+        {
+          "root_midi": 57,
+          "min_midi": 45,
+          "max_midi": 69,
+          "velocity_min": 1,
+          "velocity_max": 127,
+          "articulation": "sustain",
+          "files": [
+            "samples/pad_main/REPLACE_WITH_PAD_SAMPLE_1.wav"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lead_main",
+      "role": "lead",
+      "default_gain": 0.85,
+      "round_robin": true,
+      "zones": [
+        {
+          "root_midi": 72,
+          "min_midi": 60,
+          "max_midi": 84,
+          "velocity_min": 1,
+          "velocity_max": 127,
+          "articulation": "staccato",
+          "files": [
+            "samples/lead_main/REPLACE_WITH_LEAD_SAMPLE_1.wav",
+            "samples/lead_main/REPLACE_WITH_LEAD_SAMPLE_2.wav"
+          ]
+        }
+      ]
+    }
+  ]
+}

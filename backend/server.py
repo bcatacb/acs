@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from auth import (
 )
 from services.audio_analyzer import analyze_acapella
 from services.beat_generator import generate_beat, check_beat_status
+from services.accompaniment_generator import generate_true_accompaniment
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -133,6 +134,7 @@ async def create_project(
         "user_id": current_user["user_id"],
         "name": project_data.name,
         "genre": project_data.genre,
+        "instrument_pack": project_data.instrument_pack or "auto",
         "acapella_url": None,
         "analysis": None,
         "beat": None,
@@ -304,6 +306,7 @@ async def generate_project_beat(project_id: str, current_user: dict = Depends(ge
     
     analysis = project["analysis"]
     genre = project.get("genre", "trap")
+    instrument_pack = project.get("instrument_pack", "auto")
     
     # Update status to generating
     await db.projects.update_one(
@@ -311,31 +314,48 @@ async def generate_project_beat(project_id: str, current_user: dict = Depends(ge
         {"$set": {"status": "generating", "updated_at": datetime.now(timezone.utc).isoformat()}}
     )
     
-    # Generate beat
-    result = await generate_beat(
+    # Generate accompaniment locally using vocal timing/features.
+    result = await generate_true_accompaniment(
+        project_id=project_id,
+        audio_file_path=project["acapella_url"],
+        analysis=analysis,
         genre=genre,
-        bpm=analysis.get("bpm", 90),
-        mood=analysis.get("mood", "chill"),
-        flow_style=analysis.get("flow_style", "smooth")
+        instrument_pack=instrument_pack,
     )
     
     if result["success"]:
+        task_id = str(uuid.uuid4())
         beat_data = {
-            "task_id": result["task_id"],
-            "status": "processing",
-            "audio_url": None,
+            "task_id": task_id,
+            "status": "complete",
+            "audio_url": None,  # populated dynamically in beat-status response
+            "audio_path": result.get("audio_path"),
+            "mix_url": None,    # populated dynamically in beat-status response
+            "mix_path": result.get("mix_path"),
             "image_url": None,
-            "title": None,
-            "duration": None
+            "title": result.get("title"),
+            "duration": result.get("duration"),
+            "bpm": result.get("bpm"),
+            "onset_count": result.get("onset_count"),
+            "repetition_score": result.get("repetition_score"),
+            "render_attempts": result.get("render_attempts"),
+            "instrument_palette": result.get("instrument_palette"),
+            "instrument_pack": result.get("instrument_pack"),
+            "instrument_system_version": result.get("instrument_system_version"),
+            "loop_source": result.get("loop_source"),
+            "arrangement_debug_path": result.get("arrangement_debug_path"),
+            "midi_sources": result.get("midi_sources"),
+            "asset_counts": result.get("asset_counts"),
         }
         await db.projects.update_one(
             {"id": project_id},
             {"$set": {
                 "beat": beat_data,
+                "status": "complete",
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }}
         )
-        return {"message": "Beat generation started", "task_id": result["task_id"]}
+        return {"message": "Accompaniment and mix generated", "task_id": task_id}
     else:
         await db.projects.update_one(
             {"id": project_id},
@@ -344,7 +364,7 @@ async def generate_project_beat(project_id: str, current_user: dict = Depends(ge
         raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))
 
 @api_router.get("/projects/{project_id}/beat-status")
-async def get_beat_status(project_id: str, current_user: dict = Depends(get_current_user)):
+async def get_beat_status(project_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     project = await db.projects.find_one(
         {"id": project_id, "user_id": current_user["user_id"]},
         {"_id": 0}
@@ -355,30 +375,98 @@ async def get_beat_status(project_id: str, current_user: dict = Depends(get_curr
     if not project.get("beat") or not project["beat"].get("task_id"):
         raise HTTPException(status_code=400, detail="No beat generation in progress")
     
-    task_id = project["beat"]["task_id"]
+    beat = project["beat"]
+    task_id = beat["task_id"]
+
+    # Local accompaniment generation is synchronous: once stored, it is complete.
+    if beat.get("status") == "complete":
+        audio_url = str(request.base_url).rstrip("/") + f"/api/projects/{project_id}/beat-audio"
+        mix_url = str(request.base_url).rstrip("/") + f"/api/projects/{project_id}/mix-audio"
+        return {
+            "success": True,
+            "status": "complete",
+            "task_id": task_id,
+            "audio_url": audio_url,
+            "mix_url": mix_url,
+            "image_url": beat.get("image_url"),
+            "title": beat.get("title"),
+            "duration": beat.get("duration"),
+            "bpm": beat.get("bpm"),
+            "onset_count": beat.get("onset_count"),
+            "repetition_score": beat.get("repetition_score"),
+            "render_attempts": beat.get("render_attempts"),
+            "instrument_palette": beat.get("instrument_palette"),
+            "instrument_pack": beat.get("instrument_pack"),
+            "instrument_system_version": beat.get("instrument_system_version"),
+            "loop_source": beat.get("loop_source"),
+            "arrangement_debug_path": beat.get("arrangement_debug_path"),
+            "midi_sources": beat.get("midi_sources"),
+            "asset_counts": beat.get("asset_counts"),
+        }
+
+    # Backward-compatible path for legacy remote generation records.
     result = await check_beat_status(task_id)
-    
-    if result["success"]:
-        if result["status"] == "complete":
-            beat_data = {
-                "task_id": task_id,
-                "status": "complete",
-                "audio_url": result.get("audio_url"),
-                "image_url": result.get("image_url"),
-                "title": result.get("title"),
-                "duration": result.get("duration")
-            }
-            await db.projects.update_one(
-                {"id": project_id},
-                {"$set": {
-                    "beat": beat_data,
-                    "status": "complete",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }}
-            )
-        return result
-    else:
+    if not result["success"]:
         raise HTTPException(status_code=500, detail=result.get("error", "Status check failed"))
+
+    if result["status"] == "complete":
+        beat_data = {
+            "task_id": task_id,
+            "status": "complete",
+            "audio_url": result.get("audio_url"),
+            "image_url": result.get("image_url"),
+            "title": result.get("title"),
+            "duration": result.get("duration")
+        }
+        await db.projects.update_one(
+            {"id": project_id},
+            {"$set": {
+                "beat": beat_data,
+                "status": "complete",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+    return result
+
+
+@api_router.get("/projects/{project_id}/beat-audio")
+async def get_beat_audio(project_id: str, current_user: dict = Depends(get_current_user)):
+    project = await db.projects.find_one(
+        {"id": project_id, "user_id": current_user["user_id"]},
+        {"_id": 0}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    beat = project.get("beat") or {}
+    audio_path = beat.get("audio_path")
+    if not audio_path:
+        raise HTTPException(status_code=404, detail="No local beat audio found")
+
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Beat audio file missing")
+
+    return FileResponse(audio_path, media_type="audio/wav", filename=f"{project_id}_accompaniment.wav")
+
+
+@api_router.get("/projects/{project_id}/mix-audio")
+async def get_mix_audio(project_id: str, current_user: dict = Depends(get_current_user)):
+    project = await db.projects.find_one(
+        {"id": project_id, "user_id": current_user["user_id"]},
+        {"_id": 0}
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    beat = project.get("beat") or {}
+    mix_path = beat.get("mix_path")
+    if not mix_path:
+        raise HTTPException(status_code=404, detail="No local mix audio found")
+
+    if not os.path.exists(mix_path):
+        raise HTTPException(status_code=404, detail="Mix audio file missing")
+
+    return FileResponse(mix_path, media_type="audio/wav", filename=f"{project_id}_mix.wav")
 
 # ============== Health Check ==============
 

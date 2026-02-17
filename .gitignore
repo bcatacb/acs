@@ -31,6 +31,10 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
+.env
+**/.env
+*.env.local
+*.env.*.local
 
 *token.json*
 *credentials.json*
@@ -80,3 +84,10 @@ agenthub/agents/youtube/db
 android-sdk/ frontend/node_modules/.cache/default-development/3.pack
 frontend/node_modules/.cache/default-development/3.pack
 frontend/node_modules/.cache/default-development/0.pack
+
+# Local runtime artifacts
+backend/uploads/
+backend/generated/
+backend/assets/
+asset_drop/
+test_reports/
