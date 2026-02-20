@@ -27,11 +27,18 @@ from auth import (
 from services.audio_analyzer import analyze_acapella
 from services.beat_generator import generate_beat, check_beat_status
 from services.accompaniment_generator import generate_true_accompaniment
+from soundbank_api import soundbank_router  # Import soundbank router
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# MongoDB connection (optional, only if needed)
+client = None
+db = None
+try:
+    mongo_url = os.environ.get('MONGO_URL')
+    if mongo_url:
+        client = AsyncIOMotorClient(mongo_url)
+        db = client[os.environ.get('DB_NAME', 'test_database')]
+except Exception as e:
+    print(f"Warning: MongoDB not available: {e}")
 
 # Create uploads directory
 UPLOADS_DIR = ROOT_DIR / "uploads"
@@ -478,8 +485,9 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-# Include the router
+# Include the routers
 app.include_router(api_router)
+app.include_router(soundbank_router)  # Include soundbank API routes
 
 app.add_middleware(
     CORSMiddleware,
